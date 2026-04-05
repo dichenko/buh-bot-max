@@ -7,6 +7,11 @@ import { registerHandlers } from "./handlers/registerHandlers";
 const bot = new Bot(config.botToken);
 
 const MAX_BODY_SIZE_BYTES = 1024 * 1024;
+const PROCESSED_UPDATE_TTL_MS = 30 * 60 * 1000;
+const PROCESSED_UPDATE_CACHE_LIMIT = 10_000;
+
+const processedUpdateKeys = new Map<string, number>();
+const inFlightUpdates = new Map<string, Promise<void>>();
 
 const botCommands = [
   {
@@ -42,11 +47,112 @@ const sleep = (ms: number): Promise<void> => {
 };
 
 type HttpError = Error & { statusCode: number };
+type JsonObject = Record<string, unknown>;
 
 const toHttpError = (message: string, statusCode: number): HttpError => {
   const error = new Error(message) as HttpError;
   error.statusCode = statusCode;
   return error;
+};
+
+const asObject = (value: unknown): JsonObject | null => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    return null;
+  }
+
+  return value as JsonObject;
+};
+
+const asString = (value: unknown): string | null => {
+  if (typeof value !== "string") {
+    return null;
+  }
+
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+};
+
+const asNumber = (value: unknown): number | null => {
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    return null;
+  }
+
+  return value;
+};
+
+const getUpdateType = (update: unknown): string => {
+  const payload = asObject(update);
+  return asString(payload?.update_type) ?? "unknown";
+};
+
+const buildUpdateDedupKey = (update: unknown): string => {
+  const payload = asObject(update);
+  const updateType = getUpdateType(update);
+  if (!payload) {
+    return `${updateType}:raw`;
+  }
+
+  const directMessageId = asString(payload.message_id);
+  if (directMessageId) {
+    return `${updateType}:message_id:${directMessageId}`;
+  }
+
+  const message = asObject(payload.message);
+  const messageBody = asObject(message?.body);
+  const messageMid = asString(messageBody?.mid);
+  if (messageMid) {
+    return `${updateType}:mid:${messageMid}`;
+  }
+
+  const callback = asObject(payload.callback);
+  const callbackId = asString(callback?.callback_id);
+  if (callbackId) {
+    return `${updateType}:callback_id:${callbackId}`;
+  }
+
+  const sessionId = asString(payload.session_id);
+  if (sessionId) {
+    return `${updateType}:session_id:${sessionId}`;
+  }
+
+  const timestamp = asNumber(payload.timestamp) ?? 0;
+  const chatId =
+    asNumber(payload.chat_id) ??
+    asNumber(asObject(message?.recipient)?.chat_id) ??
+    asNumber(asObject(payload.chat)?.chat_id) ??
+    0;
+  const userId =
+    asNumber(asObject(payload.user)?.user_id) ??
+    asNumber(asObject(message?.sender)?.user_id) ??
+    asNumber(asObject(callback?.user)?.user_id) ??
+    0;
+
+  return `${updateType}:ts:${timestamp}:chat:${chatId}:user:${userId}`;
+};
+
+const pruneProcessedUpdates = (): void => {
+  const nowMs = Date.now();
+  for (const [key, expiresAt] of processedUpdateKeys) {
+    if (expiresAt <= nowMs) {
+      processedUpdateKeys.delete(key);
+    }
+  }
+};
+
+const trimProcessedUpdates = (): void => {
+  while (processedUpdateKeys.size > PROCESSED_UPDATE_CACHE_LIMIT) {
+    const oldestKey = processedUpdateKeys.keys().next().value;
+    if (typeof oldestKey !== "string") {
+      return;
+    }
+
+    processedUpdateKeys.delete(oldestKey);
+  }
+};
+
+const rememberProcessedUpdate = (dedupKey: string): void => {
+  processedUpdateKeys.set(dedupKey, Date.now() + PROCESSED_UPDATE_TTL_MS);
+  trimProcessedUpdates();
 };
 
 const sendJson = (res: ServerResponse, statusCode: number, payload: unknown): void => {
@@ -114,6 +220,40 @@ const dispatchUpdate = async (update: unknown): Promise<void> => {
   await bot.middleware()(ctx as any, () => Promise.resolve(undefined));
 };
 
+const dispatchUpdateDeduplicated = async (
+  update: unknown,
+): Promise<{ dedupKey: string; duplicate: boolean }> => {
+  const dedupKey = buildUpdateDedupKey(update);
+  pruneProcessedUpdates();
+
+  const nowMs = Date.now();
+  const expiresAt = processedUpdateKeys.get(dedupKey);
+  if (typeof expiresAt === "number") {
+    if (expiresAt > nowMs) {
+      return { dedupKey, duplicate: true };
+    }
+
+    processedUpdateKeys.delete(dedupKey);
+  }
+
+  const existing = inFlightUpdates.get(dedupKey);
+  if (existing) {
+    await existing;
+    return { dedupKey, duplicate: true };
+  }
+
+  const processing = dispatchUpdate(update);
+  inFlightUpdates.set(dedupKey, processing);
+
+  try {
+    await processing;
+    rememberProcessedUpdate(dedupKey);
+    return { dedupKey, duplicate: false };
+  } finally {
+    inFlightUpdates.delete(dedupKey);
+  }
+};
+
 const handleWebhookRequest = async (
   req: IncomingMessage,
   res: ServerResponse,
@@ -130,13 +270,13 @@ const handleWebhookRequest = async (
 
   const rawBody = await readBody(req);
   const update = parseUpdate(rawBody);
-  await dispatchUpdate(update);
-
-  const updateType =
-    typeof (update as { update_type?: unknown }).update_type === "string"
-      ? (update as { update_type: string }).update_type
-      : "unknown";
-  console.log(`Webhook processed: ${updateType}`);
+  const updateType = getUpdateType(update);
+  const { dedupKey, duplicate } = await dispatchUpdateDeduplicated(update);
+  if (duplicate) {
+    console.warn(`Webhook duplicate skipped: ${updateType} (${dedupKey})`);
+  } else {
+    console.log(`Webhook processed: ${updateType} (${dedupKey})`);
+  }
 
   sendJson(res, 200, { ok: true });
 };
