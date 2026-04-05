@@ -67,7 +67,7 @@ services:
         condition: service_healthy
 
   pgadmin:
-    image: dpage/pgadmin4:8
+    image: dpage/pgadmin4:9.14
     container_name: buh-bot-max-pgadmin
     restart: unless-stopped
     environment:
