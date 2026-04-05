@@ -35,12 +35,10 @@ registerHandlers(bot);
 
 let botInfo: unknown;
 
-const ensureBotInfo = async (): Promise<unknown> => {
-  if (!botInfo) {
-    botInfo = await bot.api.getMyInfo();
-  }
-
-  return botInfo;
+const sleep = (ms: number): Promise<void> => {
+  return new Promise<void>((resolve) => {
+    setTimeout(resolve, ms);
+  });
 };
 
 type HttpError = Error & { statusCode: number };
@@ -112,8 +110,7 @@ const parseUpdate = (rawBody: string): unknown => {
 };
 
 const dispatchUpdate = async (update: unknown): Promise<void> => {
-  const currentBotInfo = await ensureBotInfo();
-  const ctx = new Context(update as any, bot.api, currentBotInfo as any);
+  const ctx = new Context(update as any, bot.api, botInfo as any);
   await bot.middleware()(ctx as any, () => Promise.resolve(undefined));
 };
 
@@ -210,9 +207,6 @@ process.on("SIGTERM", () => {
 });
 
 const start = async (): Promise<void> => {
-  await bot.api.setMyCommands(botCommands);
-  await ensureBotInfo();
-
   await new Promise<void>((resolve, reject) => {
     const onError = (error: Error): void => {
       server.off("listening", onListening);
@@ -236,6 +230,28 @@ const start = async (): Promise<void> => {
   if (config.webhookUrl) {
     console.log(`Expected webhook URL: ${config.webhookUrl}`);
   }
+
+  // MAX API may be temporarily unavailable (DNS/network). Keep webhook server
+  // alive and retry metadata sync in background until it succeeds.
+  void (async () => {
+    let attempt = 0;
+    while (true) {
+      attempt += 1;
+      try {
+        await bot.api.setMyCommands(botCommands);
+        botInfo = await bot.api.getMyInfo();
+        console.log("MAX bot commands synced and bot info loaded.");
+        return;
+      } catch (error) {
+        const delayMs = Math.min(30000, attempt * 5000);
+        console.warn(
+          `MAX API startup sync failed (attempt ${attempt}), retry in ${Math.floor(delayMs / 1000)}s:`,
+          error,
+        );
+        await sleep(delayMs);
+      }
+    }
+  })();
 };
 
 void start().catch(async (error) => {
