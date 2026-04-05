@@ -1,0 +1,20 @@
+/old_project/
+/Перенос проекта/
+/.env
+
+# Node.js
+node_modules/
+dist/
+*.tsbuildinfo
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Docker and local runtime
+pg_data/
+pgadmin_data/
+logs/
+tmp/

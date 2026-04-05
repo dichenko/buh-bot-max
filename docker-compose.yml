@@ -1,0 +1,82 @@
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: buh-bot-max-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB}
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./db/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  bot:
+    build:
+      context: ./bot
+    container_name: buh-bot-max-bot
+    restart: unless-stopped
+    environment:
+      MAX_BOT_TOKEN: ${MAX_BOT_TOKEN}
+      DATABASE_URL: ${DATABASE_URL}
+      ADMIN_IDS: ${ADMIN_IDS}
+      BOT_TIMEZONE: ${BOT_TIMEZONE}
+      WORK_START: ${WORK_START}
+      WORK_END: ${WORK_END}
+      REQUEST_COOLDOWN_MINUTES: ${REQUEST_COOLDOWN_MINUTES}
+      MAX_REQUEST_COUNT: ${MAX_REQUEST_COUNT}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      ACCOUNTING_EMAIL: ${ACCOUNTING_EMAIL}
+      MEGAPLAN_TOKEN: ${MEGAPLAN_TOKEN}
+      MEGAPLAN_URL: ${MEGAPLAN_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  worker:
+    build:
+      context: ./worker
+    container_name: buh-bot-max-worker
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      ACCOUNTING_EMAIL: ${ACCOUNTING_EMAIL}
+      MEGAPLAN_TOKEN: ${MEGAPLAN_TOKEN}
+      MEGAPLAN_URL: ${MEGAPLAN_URL}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  pgadmin:
+    image: dpage/pgadmin4:8
+    container_name: buh-bot-max-pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
+      PGADMIN_CONFIG_SERVER_MODE: "False"
+    ports:
+      - "5050:80"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    volumes:
+      - pgadmin_data:/var/lib/pgadmin
+
+volumes:
+  pg_data:
+  pgadmin_data:
