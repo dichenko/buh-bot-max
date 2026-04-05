@@ -49,3 +49,8 @@ docker compose logs --tail=200 bot worker postgres
 ```bash
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrations/20260405_add_max_user_id.sql
 ```
+
+## Worker queue
+
+Диагностика обработки заявок и статусов очереди:
+- [docs/worker_queue.md](docs/worker_queue.md)

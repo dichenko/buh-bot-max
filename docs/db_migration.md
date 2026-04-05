@@ -161,3 +161,14 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "S
 Ожидаемо:
 - `users_without_max` > 0 для старых пользователей (это нормально);
 - `broken_user_org_links` = 0.
+## 4) Migration for worker queue statuses (invoices_ip)
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrations/20260405_add_worker_queue_status.sql
+```
+
+## 5) Auto IDs for pgAdmin inserts
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrations/20260405_auto_ids_for_pgadmin.sql
+```

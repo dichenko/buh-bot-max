@@ -67,9 +67,15 @@ services:
       ADMIN_EMAIL: ${ADMIN_EMAIL}
       TOKEN_MEGAPLAN: ${TOKEN_MEGAPLAN}
       URL_MEGAPLAN: ${URL_MEGAPLAN}
+      WORKER_POLL_INTERVAL_SECONDS: ${WORKER_POLL_INTERVAL_SECONDS:-5}
+      WORKER_IDLE_LOG_INTERVAL_SECONDS: ${WORKER_IDLE_LOG_INTERVAL_SECONDS:-60}
+      WORKER_TEMPLATES_DIR: ${WORKER_TEMPLATES_DIR:-/app/templates}
+      WORKER_OUTPUT_DIR: ${WORKER_OUTPUT_DIR:-/app/obrazec}
     depends_on:
       postgres:
         condition: service_healthy
+    volumes:
+      - ./worker/output:/app/obrazec
 
   pgadmin:
     image: dpage/pgadmin4:9.14

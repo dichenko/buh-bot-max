@@ -3,6 +3,7 @@ from __future__ import annotations
 import datetime as dt
 import os
 import re
+import shutil
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -43,6 +44,9 @@ def _ensure_template(path: Path) -> None:
 
 
 def _xlsx_to_pdf(xlsx_file: Path) -> Path:
+    if shutil.which("unoconv") is None:
+        return xlsx_file
+
     pdf_file = xlsx_file.with_suffix(".pdf")
     subprocess.run(
         ["unoconv", "-f", "pdf", "-o", str(pdf_file), str(xlsx_file)],
