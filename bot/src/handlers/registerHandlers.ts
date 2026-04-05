@@ -263,6 +263,7 @@ export const registerHandlers = (bot: Bot): void => {
     return ctx.reply(
       [
         `Заявка принята.`,
+        `Ожидайте, скоро отправлю документы.`,
         `Счет №${invoice.number}.`,
         `Организация: ${organization.org_name}.`,
         `Количество: ${count}.`,
