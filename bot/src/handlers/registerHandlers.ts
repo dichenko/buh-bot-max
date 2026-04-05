@@ -5,11 +5,10 @@ import {
   bindMaxIdToLegacyUser,
   deleteUserByMaxId,
   getUserByMaxUserId,
-  updateUserTimeById,
 } from "../repositories/users";
 import type { UserRow } from "../repositories/users";
 import { getOrganizationByOrgId } from "../repositories/organizations";
-import { createInvoiceIp } from "../repositories/invoices";
+import { createInvoiceIp, getLastSuccessfulInvoiceUnixByMaxUserId } from "../repositories/invoices";
 import {
   formatPrice,
   isWithinWorkingHours,
@@ -228,11 +227,15 @@ export const registerHandlers = (bot: Bot): void => {
     }
 
     const nowUnix = Math.floor(now.getTime() / 1000);
-    const leftMinutes = remainingCooldownMinutes(
-      user.user_time,
-      nowUnix,
-      config.requestCooldownMinutes,
-    );
+    const lastSuccessfulInvoiceUnix = await getLastSuccessfulInvoiceUnixByMaxUserId(maxUserId);
+    const leftMinutes =
+      lastSuccessfulInvoiceUnix === null
+        ? 0
+        : remainingCooldownMinutes(
+            lastSuccessfulInvoiceUnix,
+            nowUnix,
+            config.requestCooldownMinutes,
+          );
     if (leftMinutes > 0) {
       return ctx.reply(
         `Новая заявка будет доступна через ${leftMinutes} мин. Ограничение: 1 заявка в ${config.requestCooldownMinutes} мин.`,
@@ -256,8 +259,6 @@ export const registerHandlers = (bot: Bot): void => {
       maxUserId,
       count,
     });
-
-    await updateUserTimeById(user.id, nowUnix);
 
     return ctx.reply(
       [

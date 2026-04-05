@@ -16,6 +16,10 @@ type InvoiceResult = {
   date: string;
 };
 
+type LastSuccessfulInvoiceResult = {
+  last_success_unix: string | number | null;
+};
+
 export const createInvoiceIp = async (payload: CreateInvoiceInput): Promise<InvoiceResult> => {
   const client = await pool.connect();
 
@@ -69,4 +73,26 @@ export const createInvoiceIp = async (payload: CreateInvoiceInput): Promise<Invo
   } finally {
     client.release();
   }
+};
+
+export const getLastSuccessfulInvoiceUnixByMaxUserId = async (
+  maxUserId: number,
+): Promise<number | null> => {
+  const result = await pool.query<LastSuccessfulInvoiceResult>(
+    `
+      SELECT EXTRACT(EPOCH FROM MAX(worker_finished_at))::BIGINT AS last_success_unix
+      FROM invoices_ip
+      WHERE user_id = $1
+        AND worker_status = 'done'
+    `,
+    [maxUserId],
+  );
+
+  const rawValue = result.rows[0]?.last_success_unix;
+  if (rawValue === null || rawValue === undefined) {
+    return null;
+  }
+
+  const parsed = Number(rawValue);
+  return Number.isFinite(parsed) ? parsed : null;
 };
