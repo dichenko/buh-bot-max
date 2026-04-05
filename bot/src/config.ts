@@ -2,6 +2,7 @@ import "dotenv/config";
 
 type AppConfig = {
   botToken: string;
+  botSubdomain: string;
   databaseUrl: string;
   adminIds: Set<number>;
   timezone: string;
@@ -9,6 +10,18 @@ type AppConfig = {
   workEnd: string;
   requestCooldownMinutes: number;
   maxRequestCount: number;
+  megaplan: {
+    token: string;
+    url: string;
+  };
+  smtp: {
+    host: string;
+    port: number | null;
+    secure: boolean;
+    user: string;
+    password: string;
+    from: string;
+  };
 };
 
 const requireEnv = (name: string): string => {
@@ -33,6 +46,20 @@ const parsePositiveInt = (name: string, fallback: number): number => {
   return parsed;
 };
 
+const parseOptionalInt = (name: string): number | null => {
+  const raw = process.env[name]?.trim();
+  if (!raw) {
+    return null;
+  }
+
+  const parsed = Number.parseInt(raw, 10);
+  if (!Number.isFinite(parsed) || parsed <= 0) {
+    throw new Error(`${name} must be a positive integer when provided`);
+  }
+
+  return parsed;
+};
+
 const parseAdminIds = (): Set<number> => {
   const raw = process.env.ADMIN_IDS?.trim();
   if (!raw) {
@@ -51,6 +78,7 @@ const parseAdminIds = (): Set<number> => {
 
 export const config: AppConfig = {
   botToken: requireEnv("MAX_BOT_TOKEN"),
+  botSubdomain: process.env.BOT_SUBDOMAIN?.trim() || "",
   databaseUrl: requireEnv("DATABASE_URL"),
   adminIds: parseAdminIds(),
   timezone: process.env.BOT_TIMEZONE?.trim() || "Europe/Moscow",
@@ -58,6 +86,18 @@ export const config: AppConfig = {
   workEnd: process.env.WORK_END?.trim() || "20:59",
   requestCooldownMinutes: parsePositiveInt("REQUEST_COOLDOWN_MINUTES", 30),
   maxRequestCount: parsePositiveInt("MAX_REQUEST_COUNT", 5000),
+  megaplan: {
+    token: process.env.TOKEN_MEGAPLAN?.trim() || "",
+    url: process.env.URL_MEGAPLAN?.trim() || "",
+  },
+  smtp: {
+    host: process.env.SMTP_HOST?.trim() || "",
+    port: parseOptionalInt("SMTP_PORT"),
+    secure: (process.env.SMTP_SECURE?.trim().toLowerCase() || "false") === "true",
+    user: process.env.SMTP_USER?.trim() || "",
+    password: process.env.SMTP_PASSWORD?.trim() || "",
+    from: process.env.SMTP_FROM?.trim() || "",
+  },
 };
 
 export const LEGACY_INITIAL_USER_TIME = 1672520400;

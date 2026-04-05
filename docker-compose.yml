@@ -4,16 +4,16 @@ services:
     container_name: buh-bot-max-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_DB: ${POSTGRES_DB}
-      POSTGRES_USER: ${POSTGRES_USER}
-      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-buh_bot}
+      POSTGRES_USER: ${POSTGRES_USER:-buh_bot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pg_data:/var/lib/postgresql/data
       - ./db/init:/docker-entrypoint-initdb.d:ro
     healthcheck:
-      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-buh_bot} -d ${POSTGRES_DB:-buh_bot}"]
       interval: 5s
       timeout: 5s
       retries: 10
@@ -25,6 +25,7 @@ services:
     restart: unless-stopped
     environment:
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN}
+      BOT_SUBDOMAIN: ${BOT_SUBDOMAIN}
       DATABASE_URL: ${DATABASE_URL}
       ADMIN_IDS: ${ADMIN_IDS}
       BOT_TIMEZONE: ${BOT_TIMEZONE}
@@ -34,11 +35,12 @@ services:
       MAX_REQUEST_COUNT: ${MAX_REQUEST_COUNT}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
-      ACCOUNTING_EMAIL: ${ACCOUNTING_EMAIL}
-      MEGAPLAN_TOKEN: ${MEGAPLAN_TOKEN}
-      MEGAPLAN_URL: ${MEGAPLAN_URL}
+      SMTP_FROM: ${SMTP_FROM}
+      TOKEN_MEGAPLAN: ${TOKEN_MEGAPLAN}
+      URL_MEGAPLAN: ${URL_MEGAPLAN}
     depends_on:
       postgres:
         condition: service_healthy
@@ -52,11 +54,12 @@ services:
       DATABASE_URL: ${DATABASE_URL}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
       SMTP_USER: ${SMTP_USER}
       SMTP_PASSWORD: ${SMTP_PASSWORD}
-      ACCOUNTING_EMAIL: ${ACCOUNTING_EMAIL}
-      MEGAPLAN_TOKEN: ${MEGAPLAN_TOKEN}
-      MEGAPLAN_URL: ${MEGAPLAN_URL}
+      SMTP_FROM: ${SMTP_FROM}
+      TOKEN_MEGAPLAN: ${TOKEN_MEGAPLAN}
+      URL_MEGAPLAN: ${URL_MEGAPLAN}
     depends_on:
       postgres:
         condition: service_healthy
@@ -66,6 +69,7 @@ services:
     container_name: buh-bot-max-pgadmin
     restart: unless-stopped
     environment:
+      PGADMIN_SUBDOMAIN: ${PGADMIN_SUBDOMAIN}
       PGADMIN_DEFAULT_EMAIL: ${PGADMIN_DEFAULT_EMAIL}
       PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_DEFAULT_PASSWORD}
       PGADMIN_CONFIG_SERVER_MODE: "False"
