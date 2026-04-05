@@ -8,9 +8,12 @@ import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 from typing import List
+from zoneinfo import ZoneInfo
 
 import openpyxl
 from num2words import num2words
+
+DEFAULT_TIMEZONE = ZoneInfo("Europe/Moscow")
 
 
 @dataclass
@@ -135,6 +138,7 @@ def generate_documents(
     task: DocumentTask,
     templates_dir: Path | str = Path("templates"),
     output_dir: Path | str = Path("obrazec"),
+    timezone: dt.tzinfo = DEFAULT_TIMEZONE,
 ) -> WorkerResult:
     if task.count <= 0:
         return WorkerResult(
@@ -153,7 +157,8 @@ def generate_documents(
         _ensure_template(akt_template)
         _ensure_template(invoice_template)
 
-        work_date = task.work_date or dt.date.today()
+        now = dt.datetime.now(timezone)
+        work_date = task.work_date or now.date()
         date_str = work_date.strftime("%d.%m.%Y")
         total_sum = task.count * task.price_per_item
 
@@ -161,7 +166,7 @@ def generate_documents(
         workspace.mkdir(parents=True, exist_ok=True)
 
         org_name_clean = _sanitize_for_filename(task.org_name)
-        timestamp = dt.datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+        timestamp = now.strftime("%Y-%m-%d_%H-%M-%S")
 
         akt_xlsx = workspace / f"Акт-ИП-{timestamp}_{org_name_clean}.xlsx"
         invoice_xlsx = workspace / f"Счет-ИП-{timestamp}_{org_name_clean}.xlsx"

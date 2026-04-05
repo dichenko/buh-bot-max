@@ -3,6 +3,7 @@ import { createServer, type IncomingMessage, type ServerResponse } from "node:ht
 import { config } from "./config";
 import { closeDb } from "./db";
 import { registerHandlers } from "./handlers/registerHandlers";
+import { logger } from "./services/logger";
 
 const bot = new Bot(config.botToken);
 
@@ -261,7 +262,7 @@ const handleWebhookRequest = async (
   const requestSecret = req.headers["x-max-bot-api-secret"];
   const normalizedSecret = Array.isArray(requestSecret) ? requestSecret[0] : requestSecret;
   if (config.webhookSecret && normalizedSecret !== config.webhookSecret) {
-    console.warn(
+    logger.warn(
       `Webhook rejected: invalid secret for ${req.method ?? "UNKNOWN"} ${req.url ?? ""}`,
     );
     sendJson(res, 401, { ok: false, message: "Invalid webhook secret" });
@@ -273,9 +274,9 @@ const handleWebhookRequest = async (
   const updateType = getUpdateType(update);
   const { dedupKey, duplicate } = await dispatchUpdateDeduplicated(update);
   if (duplicate) {
-    console.warn(`Webhook duplicate skipped: ${updateType} (${dedupKey})`);
+    logger.warn(`Webhook duplicate skipped: ${updateType} (${dedupKey})`);
   } else {
-    console.log(`Webhook processed: ${updateType} (${dedupKey})`);
+    logger.info(`Webhook processed: ${updateType} (${dedupKey})`);
   }
 
   sendJson(res, 200, { ok: true });
@@ -290,7 +291,7 @@ const server = createServer((req, res) => {
 
   if (req.method !== "POST" || pathname !== config.webhookPath) {
     if (pathname === config.webhookPath) {
-      console.warn(`Webhook rejected: invalid method ${req.method ?? "UNKNOWN"}`);
+      logger.warn(`Webhook rejected: invalid method ${req.method ?? "UNKNOWN"}`);
     }
 
     sendJson(res, 404, { ok: false, message: "Not found" });
@@ -305,7 +306,7 @@ const server = createServer((req, res) => {
         : 500;
 
     if (statusCode >= 500) {
-      console.error("Unhandled webhook error:", error);
+      logger.error("Unhandled webhook error:", error);
     }
 
     sendJson(res, statusCode, {
@@ -333,7 +334,7 @@ const closeServer = async (): Promise<void> => {
 };
 
 const shutdown = async (signal: string): Promise<void> => {
-  console.log(`Received ${signal}, shutting down...`);
+  logger.info(`Received ${signal}, shutting down...`);
   await closeServer();
   await closeDb();
   process.exit(0);
@@ -364,11 +365,11 @@ const start = async (): Promise<void> => {
     });
   });
 
-  console.log(
+  logger.info(
     `MAX bot webhook server started on port ${config.webhookPort}, path ${config.webhookPath}`,
   );
   if (config.webhookUrl) {
-    console.log(`Expected webhook URL: ${config.webhookUrl}`);
+    logger.info(`Expected webhook URL: ${config.webhookUrl}`);
   }
 
   // MAX API may be temporarily unavailable (DNS/network). Keep webhook server
@@ -380,11 +381,11 @@ const start = async (): Promise<void> => {
       try {
         await bot.api.setMyCommands(botCommands);
         botInfo = await bot.api.getMyInfo();
-        console.log("MAX bot commands synced and bot info loaded.");
+        logger.info("MAX bot commands synced and bot info loaded.");
         return;
       } catch (error) {
         const delayMs = Math.min(30000, attempt * 5000);
-        console.warn(
+        logger.warn(
           `MAX API startup sync failed (attempt ${attempt}), retry in ${Math.floor(delayMs / 1000)}s:`,
           error,
         );
@@ -395,7 +396,7 @@ const start = async (): Promise<void> => {
 };
 
 void start().catch(async (error) => {
-  console.error("Failed to start MAX bot webhook server:", error);
+  logger.error("Failed to start MAX bot webhook server:", error);
   await closeDb();
   process.exit(1);
 });

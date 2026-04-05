@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg
 import requests
@@ -18,8 +19,35 @@ from psycopg.rows import dict_row
 
 from .excel_pdf_worker import DocumentTask, WorkerResult, generate_documents
 
+DEFAULT_TIMEZONE_NAME = "Europe/Moscow"
 
-logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
+
+class TimezoneAwareFormatter(logging.Formatter):
+    def __init__(self, fmt: str, datefmt: str, timezone: dt.tzinfo):
+        super().__init__(fmt=fmt, datefmt=datefmt)
+        self._timezone = timezone
+
+    def formatTime(self, record: logging.LogRecord, datefmt: str | None = None) -> str:
+        current = dt.datetime.fromtimestamp(record.created, tz=self._timezone)
+        if datefmt:
+            return current.strftime(datefmt)
+        return current.isoformat(timespec="seconds")
+
+
+def _configure_logging(timezone: dt.tzinfo) -> None:
+    handler = logging.StreamHandler()
+    handler.setFormatter(
+        TimezoneAwareFormatter(
+            fmt="%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S %z",
+            timezone=timezone,
+        )
+    )
+
+    root_logger = logging.getLogger()
+    root_logger.handlers.clear()
+    root_logger.setLevel(logging.INFO)
+    root_logger.addHandler(handler)
 
 
 @dataclass(frozen=True)
@@ -49,6 +77,8 @@ class WorkerConfig:
     idle_log_interval_seconds: float
     templates_dir: Path
     output_dir: Path
+    timezone_name: str
+    timezone: dt.tzinfo
     smtp: SmtpConfig
     megaplan: MegaPlanConfig
 
@@ -165,6 +195,15 @@ def _load_config() -> WorkerConfig:
 
     templates_dir = Path((os.getenv("WORKER_TEMPLATES_DIR") or "/app/templates").strip())
     output_dir = Path((os.getenv("WORKER_OUTPUT_DIR") or "/app/obrazec").strip())
+    timezone_name = (
+        os.getenv("BOT_TIMEZONE")
+        or os.getenv("APP_TIMEZONE")
+        or DEFAULT_TIMEZONE_NAME
+    ).strip() or DEFAULT_TIMEZONE_NAME
+    try:
+        timezone = ZoneInfo(timezone_name)
+    except ZoneInfoNotFoundError as exc:
+        raise ValueError(f"Unknown timezone: {timezone_name}") from exc
 
     return WorkerConfig(
         database_url=database_url,
@@ -172,6 +211,8 @@ def _load_config() -> WorkerConfig:
         idle_log_interval_seconds=_parse_positive_float("WORKER_IDLE_LOG_INTERVAL_SECONDS", 60.0),
         templates_dir=templates_dir,
         output_dir=output_dir,
+        timezone_name=timezone_name,
+        timezone=timezone,
         smtp=_load_smtp_config(),
         megaplan=_load_megaplan_config(),
     )
@@ -273,7 +314,7 @@ def _to_positive_int(value: Any, field_name: str) -> int:
     return parsed
 
 
-def _build_task(row: dict[str, Any]) -> DocumentTask:
+def _build_task(row: dict[str, Any], timezone: dt.tzinfo) -> DocumentTask:
     user_id = _to_positive_int(row.get("user_id"), "user_id")
     invoice_number = _to_positive_int(row.get("number"), "number")
     count = _to_positive_int(row.get("count"), "count")
@@ -289,7 +330,10 @@ def _build_task(row: dict[str, Any]) -> DocumentTask:
     date_value = row.get("date")
     work_date: dt.date | None = None
     if isinstance(date_value, dt.datetime):
-        work_date = date_value.date()
+        if date_value.tzinfo is None:
+            work_date = date_value.replace(tzinfo=timezone).date()
+        else:
+            work_date = date_value.astimezone(timezone).date()
     elif isinstance(date_value, dt.date):
         work_date = date_value
 
@@ -360,10 +404,11 @@ def _create_megaplan_task(
     task: DocumentTask,
     org_id: int | None,
     price_per_item: float,
+    timezone: dt.tzinfo,
 ) -> int | None:
     total_sum = task.count * price_per_item
-    deadline = (dt.datetime.utcnow() + dt.timedelta(days=config.deadline_days)).strftime(
-        "%Y-%m-%dT%H:%M:%SZ"
+    deadline = (dt.datetime.now(timezone) + dt.timedelta(days=config.deadline_days)).isoformat(
+        timespec="seconds"
     )
 
     payload: dict[str, Any] = {
@@ -427,15 +472,17 @@ def _create_megaplan_task(
 def run_forever() -> None:
     load_dotenv()
     config = _load_config()
+    _configure_logging(config.timezone)
     config.output_dir.mkdir(parents=True, exist_ok=True)
 
     worker_id = f"{socket.gethostname()}:{os.getpid()}"
     logging.info("Python worker started: id=%s", worker_id)
     logging.info(
-        "Worker config: poll=%ss templates_dir=%s output_dir=%s",
+        "Worker config: poll=%ss templates_dir=%s output_dir=%s timezone=%s",
         config.poll_interval_seconds,
         config.templates_dir,
         config.output_dir,
+        config.timezone_name,
     )
 
     last_idle_log_ts = 0.0
@@ -462,11 +509,12 @@ def run_forever() -> None:
                     )
 
                     try:
-                        task = _build_task(row)
+                        task = _build_task(row, config.timezone)
                         result = generate_documents(
                             task=task,
                             templates_dir=config.templates_dir,
                             output_dir=config.output_dir,
+                            timezone=config.timezone,
                         )
                         if result.status != "success":
                             raise RuntimeError(result.error_message or "Document generation failed")
@@ -478,6 +526,7 @@ def run_forever() -> None:
                             task,
                             row.get("org_id"),
                             task.price_per_item,
+                            config.timezone,
                         )
                         if megaplan_task_id is not None:
                             logging.info(

@@ -7,6 +7,7 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-buh_bot}
       POSTGRES_USER: ${POSTGRES_USER:-buh_bot}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change_me}
+      TZ: ${BOT_TIMEZONE:-Europe/Moscow}
     ports:
       - "${POSTGRES_PORT:-5432}:5432"
     volumes:
@@ -29,6 +30,7 @@ services:
       MAX_BOT_TOKEN: ${MAX_BOT_TOKEN}
       BOT_SUBDOMAIN: ${BOT_SUBDOMAIN}
       PORT: 8080
+      TZ: ${BOT_TIMEZONE:-Europe/Moscow}
       WEBHOOK_PATH: ${WEBHOOK_PATH:-/webhook}
       WEBHOOK_SECRET: ${WEBHOOK_SECRET}
       DATABASE_URL: ${DATABASE_URL}
@@ -58,6 +60,8 @@ services:
     restart: unless-stopped
     environment:
       DATABASE_URL: ${DATABASE_URL}
+      TZ: ${BOT_TIMEZONE:-Europe/Moscow}
+      BOT_TIMEZONE: ${BOT_TIMEZONE:-Europe/Moscow}
       SMTP_HOST: ${SMTP_HOST}
       SMTP_PORT: ${SMTP_PORT}
       SMTP_SECURE: ${SMTP_SECURE}
