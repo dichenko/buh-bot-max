@@ -19,6 +19,18 @@ docker compose ps
 docker compose logs --tail=200 bot worker postgres
 ```
 
+## Webhook режим (без polling)
+
+Бот принимает обновления только через HTTP webhook:
+- `POST {WEBHOOK_PATH}` (по умолчанию `/webhook`)
+- `GET /healthz` для health-check
+
+Переменные:
+- `BOT_SUBDOMAIN` — публичный HTTPS-домен бота (например, `https://bot.example.com`)
+- `BOT_PORT` — локальный порт хоста для reverse proxy (по умолчанию `3003`, upstream в Caddy: `127.0.0.1:3003`)
+- `WEBHOOK_PATH` — путь webhook (по умолчанию `/webhook`)
+- `WEBHOOK_SECRET` — секрет заголовка `X-Max-Bot-Api-Secret` (рекомендуется)
+
 ## Важное по схеме users
 
 - `users.tg_user_id` — старый Telegram ID (nullable, для обратной совместимости)

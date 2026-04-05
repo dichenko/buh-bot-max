@@ -3,6 +3,10 @@ import "dotenv/config";
 type AppConfig = {
   botToken: string;
   botSubdomain: string;
+  webhookPort: number;
+  webhookPath: string;
+  webhookSecret: string;
+  webhookUrl: string;
   databaseUrl: string;
   adminIds: Set<number>;
   adminEmails: string[];
@@ -61,6 +65,28 @@ const parseOptionalInt = (name: string): number | null => {
   return parsed;
 };
 
+const normalizeWebhookPath = (raw?: string): string => {
+  const trimmed = raw?.trim();
+  if (!trimmed) {
+    return "/webhook";
+  }
+
+  return trimmed.startsWith("/") ? trimmed : `/${trimmed}`;
+};
+
+const normalizePublicUrl = (raw?: string): string => {
+  const trimmed = raw?.trim().replace(/\/+$/, "");
+  if (!trimmed) {
+    return "";
+  }
+
+  if (/^https?:\/\//i.test(trimmed)) {
+    return trimmed;
+  }
+
+  return `https://${trimmed}`;
+};
+
 const parseAdminIds = (): Set<number> => {
   const raw = process.env.ADMIN_IDS?.trim();
   if (!raw) {
@@ -92,7 +118,11 @@ const parseAdminEmails = (): string[] => {
 
 export const config: AppConfig = {
   botToken: requireEnv("MAX_BOT_TOKEN"),
-  botSubdomain: process.env.BOT_SUBDOMAIN?.trim() || "",
+  botSubdomain: normalizePublicUrl(process.env.BOT_SUBDOMAIN),
+  webhookPort: parsePositiveInt("PORT", 8080),
+  webhookPath: normalizeWebhookPath(process.env.WEBHOOK_PATH),
+  webhookSecret: process.env.WEBHOOK_SECRET?.trim() || "",
+  webhookUrl: "",
   databaseUrl: requireEnv("DATABASE_URL"),
   adminIds: parseAdminIds(),
   adminEmails: parseAdminEmails(),
@@ -114,5 +144,7 @@ export const config: AppConfig = {
     from: process.env.SMTP_FROM?.trim() || "",
   },
 };
+
+config.webhookUrl = config.botSubdomain ? `${config.botSubdomain}${config.webhookPath}` : "";
 
 export const LEGACY_INITIAL_USER_TIME = 1672520400;

@@ -7,6 +7,7 @@ import {
   getUserByMaxUserId,
   updateUserTimeById,
 } from "../repositories/users";
+import type { UserRow } from "../repositories/users";
 import { getOrganizationByOrgId } from "../repositories/organizations";
 import { createInvoiceIp } from "../repositories/invoices";
 import {
@@ -42,18 +43,59 @@ const parsePositiveNumber = (raw: string): number | null => {
   return parsed;
 };
 
+const escapeHtml = (value: string | number): string => {
+  return String(value)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+};
+
+const unauthorizedMessage = (maxUserId: number): string => {
+  return [
+    "Вас нет в базе.<br>",
+    'Свяжитесь с поддержкой: <a href="max://user/91634403">Метрология ГК</a><br>',
+    "Или по телефону +7(937)-033-22-22<br>",
+    `Ваш MaxID: ${escapeHtml(maxUserId)}`,
+  ].join("\n");
+};
+
+const replyUnauthorized = (ctx: any, maxUserId: number): Promise<unknown> => {
+  return ctx.reply(unauthorizedMessage(maxUserId), { format: "html" });
+};
+
 export const registerHandlers = (bot: Bot): void => {
+  bot.on("message_created", async (ctx: any, next: () => Promise<void>) => {
+    const maxUserId = ctx.user?.user_id;
+    if (!maxUserId) {
+      await ctx.reply("Не удалось определить ваш MAX ID.");
+      return;
+    }
+
+    if (isAdmin(maxUserId)) {
+      return next();
+    }
+
+    const user = await getUserByMaxUserId(maxUserId);
+    if (!user) {
+      await replyUnauthorized(ctx, maxUserId);
+      return;
+    }
+
+    ctx.authorizedUser = user;
+    return next();
+  });
+
   bot.command("start", async (ctx: any) => {
     const maxUserId = ctx.user?.user_id;
     if (!maxUserId) {
       return ctx.reply("Не удалось определить ваш MAX ID.");
     }
 
-    const user = await getUserByMaxUserId(maxUserId);
+    const user: UserRow | null = ctx.authorizedUser ?? (await getUserByMaxUserId(maxUserId));
     if (!user) {
-      return ctx.reply(
-        `Вы не зарегистрированы. Передайте администратору ваш MAX ID: ${maxUserId}`,
-      );
+      return replyUnauthorized(ctx, maxUserId);
     }
 
     const organization = await getOrganizationByOrgId(user.org_id);
@@ -142,11 +184,9 @@ export const registerHandlers = (bot: Bot): void => {
       return ctx.reply("Не удалось определить ваш MAX ID.");
     }
 
-    const user = await getUserByMaxUserId(maxUserId);
+    const user: UserRow | null = ctx.authorizedUser ?? (await getUserByMaxUserId(maxUserId));
     if (!user) {
-      return ctx.reply(
-        `Вы не зарегистрированы. Передайте администратору ваш MAX ID: ${maxUserId}`,
-      );
+      return replyUnauthorized(ctx, maxUserId);
     }
 
     const count = parseCount(messageText, config.maxRequestCount);
