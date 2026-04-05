@@ -86,14 +86,14 @@ INSERT INTO organizations (
     org_foundation_2
 )
 SELECT DISTINCT
-    u.org_id,
+    u.org_id::BIGINT,
     'MIGRATED placeholder org_id=' || u.org_id::TEXT,
-    0,
-    0,
-    0,
-    NULL,
-    NULL,
-    NULL
+    0::BIGINT,
+    0::BIGINT,
+    0::BIGINT,
+    NULL::BIGINT,
+    NULL::VARCHAR,
+    NULL::VARCHAR
 FROM users u
 LEFT JOIN organizations o ON o.org_id = u.org_id
 WHERE u.org_id IS NOT NULL
