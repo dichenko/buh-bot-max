@@ -12,9 +12,11 @@ from zoneinfo import ZoneInfo
 
 import openpyxl
 from num2words import num2words
+from openpyxl.worksheet.properties import PageSetupProperties
 from PIL import Image as PILImage  # noqa: F401
 
 DEFAULT_TIMEZONE = ZoneInfo("Europe/Moscow")
+INVOICE_BOTTOM_ROWS = (38, 39, 40, 41, 43)
 
 
 @dataclass
@@ -34,6 +36,63 @@ class WorkerResult:
     pdf_files: List[str]
     workspace_path: str
     error_message: str | None = None
+
+
+def _env_int(name: str, default: int, min_value: int, max_value: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    try:
+        value = int(raw.strip())
+    except ValueError:
+        return default
+
+    return max(min_value, min(max_value, value))
+
+
+def _env_float(name: str, default: float, min_value: float, max_value: float) -> float:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    try:
+        value = float(raw.strip())
+    except ValueError:
+        return default
+
+    return max(min_value, min(max_value, value))
+
+
+def _tune_invoice_print_layout(sheet: openpyxl.worksheet.worksheet.Worksheet) -> None:
+    # Keep one-page fit from template, but reduce aggressive vertical compression.
+    invoice_scale = _env_int("INVOICE_PRINT_SCALE", default=76, min_value=50, max_value=100)
+    shrink_factor = _env_float(
+        "INVOICE_BOTTOM_SHRINK_FACTOR",
+        default=0.92,
+        min_value=0.80,
+        max_value=1.00,
+    )
+    min_row_height = _env_float(
+        "INVOICE_BOTTOM_MIN_ROW_HEIGHT",
+        default=20.0,
+        min_value=12.0,
+        max_value=40.0,
+    )
+
+    sheet.page_setup.scale = invoice_scale
+    sheet.page_setup.fitToWidth = None
+    sheet.page_setup.fitToHeight = None
+    if sheet.sheet_properties.pageSetUpPr is None:
+        sheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
+    else:
+        sheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+    for row_index in INVOICE_BOTTOM_ROWS:
+        row = sheet.row_dimensions[row_index]
+        if row.height is None:
+            continue
+        row.height = max(min_row_height, round(float(row.height) * shrink_factor, 2))
 
 
 def _sanitize_for_filename(value: str) -> str:
@@ -97,7 +156,6 @@ def _xlsx_to_pdf(xlsx_file: Path) -> Path:
 def _fill_akt(template_path: Path, output_path: Path, task: DocumentTask, total_sum: int | float, date_str: str) -> None:
     workbook = openpyxl.load_workbook(template_path)
     sheet = workbook.active
-
     sheet["B3"] = f"Акт № ИП-{task.invoice_number} от {date_str}"
     sheet["F7"] = f"{task.org_name}, ИНН {task.org_inn}"
     sheet["F9"] = f"Счёт-договор № {task.invoice_number} от {date_str}"
@@ -121,7 +179,7 @@ def _fill_invoice(
 ) -> None:
     workbook = openpyxl.load_workbook(template_path)
     sheet = workbook.active
-
+    _tune_invoice_print_layout(sheet)
     sheet["A10"] = f"Счет-договор № {task.invoice_number} от {date_str}"
     sheet["D18"] = f"{task.org_name}, ИНН {task.org_inn}"
     sheet["G25"] = f"{task.count}"
@@ -211,3 +269,4 @@ if __name__ == "__main__":
         print(generate_documents(demo_task))
     else:
         print("Set WORKER_DEMO=true to run demo document generation")
+
