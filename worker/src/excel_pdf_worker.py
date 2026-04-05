@@ -67,6 +67,7 @@ def _env_float(name: str, default: float, min_value: float, max_value: float) ->
 def _tune_invoice_print_layout(sheet: openpyxl.worksheet.worksheet.Worksheet) -> None:
     # Keep one-page fit from template, but reduce aggressive vertical compression.
     invoice_scale = _env_int("INVOICE_PRINT_SCALE", default=76, min_value=50, max_value=100)
+    print_area = (os.getenv("INVOICE_PRINT_AREA") or "A1:M54").strip()
     shrink_factor = _env_float(
         "INVOICE_BOTTOM_SHRINK_FACTOR",
         default=0.92,
@@ -87,6 +88,9 @@ def _tune_invoice_print_layout(sheet: openpyxl.worksheet.worksheet.Worksheet) ->
         sheet.sheet_properties.pageSetUpPr = PageSetupProperties(fitToPage=True)
     else:
         sheet.sheet_properties.pageSetUpPr.fitToPage = True
+
+    if print_area:
+        sheet.print_area = print_area
 
     for row_index in INVOICE_BOTTOM_ROWS:
         row = sheet.row_dimensions[row_index]
