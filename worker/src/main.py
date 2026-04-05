@@ -4,12 +4,15 @@ import datetime as dt
 import logging
 import os
 import socket
+import smtplib
 import time
 from dataclasses import dataclass
+from email.message import EmailMessage
 from pathlib import Path
 from typing import Any
 
 import psycopg
+import requests
 from dotenv import load_dotenv
 from psycopg.rows import dict_row
 
@@ -20,12 +23,34 @@ logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(me
 
 
 @dataclass(frozen=True)
+class SmtpConfig:
+    host: str
+    port: int
+    secure: bool
+    user: str
+    password: str
+    from_address: str
+    recipients: list[str]
+
+
+@dataclass(frozen=True)
+class MegaPlanConfig:
+    token: str
+    url: str
+    responsible_id: int
+    auditor_ids: list[int]
+    deadline_days: int
+
+
+@dataclass(frozen=True)
 class WorkerConfig:
     database_url: str
     poll_interval_seconds: float
     idle_log_interval_seconds: float
     templates_dir: Path
     output_dir: Path
+    smtp: SmtpConfig
+    megaplan: MegaPlanConfig
 
 
 def _parse_positive_float(name: str, default: float) -> float:
@@ -44,6 +69,95 @@ def _parse_positive_float(name: str, default: float) -> float:
     return value
 
 
+def _parse_positive_int(name: str, default: int) -> int:
+    raw = os.getenv(name)
+    if raw is None or not raw.strip():
+        return default
+
+    try:
+        value = int(raw.strip())
+    except ValueError as exc:
+        raise ValueError(f"{name} must be a positive integer") from exc
+
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer")
+
+    return value
+
+
+def _require_env(name: str) -> str:
+    value = (os.getenv(name) or "").strip()
+    if not value:
+        raise ValueError(f"{name} is required for worker")
+    return value
+
+
+def _parse_bool(name: str, default: bool = False) -> bool:
+    raw = os.getenv(name)
+    if raw is None:
+        return default
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _parse_int_list(raw: str) -> list[int]:
+    values: list[int] = []
+    for chunk in raw.split(","):
+        candidate = chunk.strip()
+        if not candidate:
+            continue
+        values.append(int(candidate))
+    return values
+
+
+def _parse_recipients(raw: str) -> list[str]:
+    recipients = [chunk.strip() for chunk in raw.split(",") if chunk.strip()]
+    if not recipients:
+        raise ValueError("ADMIN_EMAIL must contain at least one recipient")
+    return recipients
+
+
+def _load_smtp_config() -> SmtpConfig:
+    host = _require_env("SMTP_HOST")
+    port = _parse_positive_int("SMTP_PORT", 587)
+    secure = _parse_bool("SMTP_SECURE", default=False)
+    user = (os.getenv("SMTP_USER") or "").strip()
+    password = (os.getenv("SMTP_PASSWORD") or "").strip()
+    from_address = (os.getenv("SMTP_FROM") or "").strip() or user
+    recipients = _parse_recipients(_require_env("ADMIN_EMAIL"))
+
+    if not from_address:
+        raise ValueError("SMTP_FROM or SMTP_USER must be provided")
+    if user and not password:
+        raise ValueError("SMTP_PASSWORD is required when SMTP_USER is provided")
+
+    return SmtpConfig(
+        host=host,
+        port=port,
+        secure=secure,
+        user=user,
+        password=password,
+        from_address=from_address,
+        recipients=recipients,
+    )
+
+
+def _load_megaplan_config() -> MegaPlanConfig:
+    token = _require_env("TOKEN_MEGAPLAN")
+    url = _require_env("URL_MEGAPLAN")
+    responsible_id = _parse_positive_int("MEGAPLAN_RESPONSIBLE_ID", 1000038)
+    deadline_days = _parse_positive_int("MEGAPLAN_DEADLINE_DAYS", 14)
+    auditor_raw = (os.getenv("MEGAPLAN_AUDITOR_IDS") or "1000003,1000019,1000038").strip()
+    auditor_ids = _parse_int_list(auditor_raw)
+
+    return MegaPlanConfig(
+        token=token,
+        url=url,
+        responsible_id=responsible_id,
+        auditor_ids=auditor_ids,
+        deadline_days=deadline_days,
+    )
+
+
 def _load_config() -> WorkerConfig:
     database_url = (os.getenv("DATABASE_URL") or "").strip()
     if not database_url:
@@ -58,6 +172,8 @@ def _load_config() -> WorkerConfig:
         idle_log_interval_seconds=_parse_positive_float("WORKER_IDLE_LOG_INTERVAL_SECONDS", 60.0),
         templates_dir=templates_dir,
         output_dir=output_dir,
+        smtp=_load_smtp_config(),
+        megaplan=_load_megaplan_config(),
     )
 
 
@@ -100,6 +216,7 @@ def _claim_next_invoice(conn: psycopg.Connection[Any], worker_id: str) -> dict[s
                 inv.org_inn,
                 inv.count,
                 inv.org_price,
+                inv.org_id,
                 inv.date
             """,
             (worker_id,),
@@ -164,7 +281,7 @@ def _build_task(row: dict[str, Any]) -> DocumentTask:
     org_name_raw = row.get("org_name")
     org_name = str(org_name_raw).strip() if org_name_raw is not None else ""
     if not org_name:
-        org_name = "Без названия организации"
+        org_name = "Unknown organization"
 
     org_inn = row.get("org_inn")
     price_per_item = float(row.get("org_price") or 0)
@@ -185,6 +302,126 @@ def _build_task(row: dict[str, Any]) -> DocumentTask:
         invoice_number=invoice_number,
         work_date=work_date,
     )
+
+
+def _extract_pdf_paths(paths: list[str]) -> list[Path]:
+    pdf_paths = [Path(path) for path in paths if path.lower().endswith(".pdf")]
+    if not pdf_paths:
+        raise RuntimeError("Document generation completed without PDF files")
+    return pdf_paths
+
+
+def _send_invoice_email(config: SmtpConfig, task: DocumentTask, pdf_paths: list[Path]) -> None:
+    total_sum = task.count * task.price_per_item
+    message = EmailMessage()
+    message["From"] = config.from_address
+    message["To"] = ", ".join(config.recipients)
+    message["Subject"] = f"Заявка от {task.org_name}"
+    message.set_content(
+        "\n".join(
+            [
+                f"Организация: {task.org_name}",
+                f"Max user id: {task.user_id}",
+                f"Номер счета: {task.invoice_number}",
+                f"Количество: {task.count}",
+                f"Цена за 1 услугу: {task.price_per_item}",
+                f"Сумма: {total_sum}",
+            ]
+        )
+    )
+
+    for pdf_path in pdf_paths:
+        with pdf_path.open("rb") as file:
+            message.add_attachment(
+                file.read(),
+                maintype="application",
+                subtype="pdf",
+                filename=pdf_path.name,
+            )
+
+    if config.secure:
+        with smtplib.SMTP_SSL(config.host, config.port, timeout=60) as server:
+            if config.user:
+                server.login(config.user, config.password)
+            server.send_message(message)
+        return
+
+    with smtplib.SMTP(config.host, config.port, timeout=60) as server:
+        server.ehlo()
+        server.starttls()
+        server.ehlo()
+        if config.user:
+            server.login(config.user, config.password)
+        server.send_message(message)
+
+
+def _create_megaplan_task(
+    config: MegaPlanConfig,
+    task: DocumentTask,
+    org_id: int | None,
+    price_per_item: float,
+) -> int | None:
+    total_sum = task.count * price_per_item
+    deadline = (dt.datetime.utcnow() + dt.timedelta(days=config.deadline_days)).strftime(
+        "%Y-%m-%dT%H:%M:%SZ"
+    )
+
+    payload: dict[str, Any] = {
+        "contentType": "Task",
+        "name": f"Ждем оплату от {task.org_name}",
+        "responsible": {
+            "contentType": "Employee",
+            "id": config.responsible_id,
+        },
+        "subject": (
+            "Выставлен счет через MAX бот\n"
+            f"Организация: {task.org_name}\n"
+            f"org_id: {org_id if org_id is not None else '-'}\n"
+            f"Max user id: {task.user_id}\n"
+            f"Количество: {task.count}\n"
+            f"Счет № ИП {task.invoice_number}\n"
+            f"Акт № ИП {task.invoice_number}\n"
+            f"Цена за 1 услугу: {price_per_item} руб.\n"
+            f"Сумма: {total_sum} руб."
+        ),
+        "isUrgent": False,
+        "isTemplate": False,
+        "deadline": {
+            "contentType": "DateTime",
+            "value": deadline,
+        },
+    }
+
+    if config.auditor_ids:
+        payload["auditors"] = [
+            {"contentType": "Employee", "id": auditor_id} for auditor_id in config.auditor_ids
+        ]
+
+    response = requests.post(
+        config.url,
+        headers={
+            "Authorization": f"Bearer {config.token}",
+            "Content-Type": "application/json",
+        },
+        json=payload,
+        timeout=30,
+    )
+    if not response.ok:
+        raise RuntimeError(
+            f"MegaPlan API error [{response.status_code}]: "
+            f"{(response.text or '').strip()[:1000]}"
+        )
+
+    task_id: int | None = None
+    try:
+        response_json = response.json()
+        raw_task_id = response_json.get("data", {}).get("id")
+        if raw_task_id is not None:
+            task_id = int(raw_task_id)
+    except Exception:  # noqa: BLE001
+        pass
+
+    return task_id
 
 
 def run_forever() -> None:
@@ -233,6 +470,21 @@ def run_forever() -> None:
                         )
                         if result.status != "success":
                             raise RuntimeError(result.error_message or "Document generation failed")
+                        pdf_paths = _extract_pdf_paths(result.pdf_files)
+
+                        _send_invoice_email(config.smtp, task, pdf_paths)
+                        megaplan_task_id = _create_megaplan_task(
+                            config.megaplan,
+                            task,
+                            row.get("org_id"),
+                            task.price_per_item,
+                        )
+                        if megaplan_task_id is not None:
+                            logging.info(
+                                "MegaPlan task created for invoice id=%s: task_id=%s",
+                                invoice_id,
+                                megaplan_task_id,
+                            )
 
                         _mark_done(conn, invoice_id, result)
                         logging.info("Invoice id=%s processed. Files: %s", invoice_id, result.pdf_files)

@@ -44,14 +44,48 @@ def _ensure_template(path: Path) -> None:
 
 
 def _xlsx_to_pdf(xlsx_file: Path) -> Path:
-    if shutil.which("unoconv") is None:
-        return xlsx_file
-
     pdf_file = xlsx_file.with_suffix(".pdf")
-    subprocess.run(
-        ["unoconv", "-f", "pdf", "-o", str(pdf_file), str(xlsx_file)],
-        check=True,
-    )
+    unoconv_path = shutil.which("unoconv")
+    libreoffice_path = shutil.which("libreoffice")
+
+    if unoconv_path:
+        completed = subprocess.run(
+            [unoconv_path, "-f", "pdf", "-o", str(pdf_file), str(xlsx_file)],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "unoconv conversion failed: "
+                f"{(completed.stderr or completed.stdout or '').strip()}"
+            )
+    elif libreoffice_path:
+        completed = subprocess.run(
+            [
+                libreoffice_path,
+                "--headless",
+                "--convert-to",
+                "pdf",
+                "--outdir",
+                str(xlsx_file.parent),
+                str(xlsx_file),
+            ],
+            check=False,
+            capture_output=True,
+            text=True,
+        )
+        if completed.returncode != 0:
+            raise RuntimeError(
+                "libreoffice conversion failed: "
+                f"{(completed.stderr or completed.stdout or '').strip()}"
+            )
+    else:
+        raise RuntimeError("PDF conversion tool is missing (unoconv/libreoffice not installed)")
+
+    if not pdf_file.exists():
+        raise RuntimeError(f"PDF file was not created: {pdf_file}")
+
     xlsx_file.unlink(missing_ok=True)
     return pdf_file
 
