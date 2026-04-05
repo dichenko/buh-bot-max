@@ -65,6 +65,20 @@ const replyUnauthorized = (ctx: any, maxUserId: number): Promise<unknown> => {
   return ctx.reply(unauthorizedMessage(maxUserId), { format: "html" });
 };
 
+const replyStartMessage = async (ctx: any, maxUserId: number): Promise<unknown> => {
+  const user: UserRow | null = ctx.authorizedUser ?? (await getUserByMaxUserId(maxUserId));
+  if (!user) {
+    return replyUnauthorized(ctx, maxUserId);
+  }
+
+  const organization = await getOrganizationByOrgId(user.org_id);
+  const orgName = organization?.org_name ?? `org_id=${user.org_id}`;
+
+  return ctx.reply(
+    `Здравствуйте. Организация: ${orgName}.\nОтправьте количество услуг числом (до ${config.maxRequestCount}).`,
+  );
+};
+
 export const registerHandlers = (bot: Bot): void => {
   bot.on("message_created", async (ctx: any, next: () => Promise<void>) => {
     const maxUserId = ctx.user?.user_id;
@@ -93,17 +107,26 @@ export const registerHandlers = (bot: Bot): void => {
       return ctx.reply("Не удалось определить ваш MAX ID.");
     }
 
-    const user: UserRow | null = ctx.authorizedUser ?? (await getUserByMaxUserId(maxUserId));
+    return replyStartMessage(ctx, maxUserId);
+  });
+
+  bot.on("bot_started", async (ctx: any) => {
+    const maxUserId = ctx.user?.user_id;
+    if (!maxUserId) {
+      return;
+    }
+
+    if (isAdmin(maxUserId)) {
+      return replyStartMessage(ctx, maxUserId);
+    }
+
+    const user = await getUserByMaxUserId(maxUserId);
     if (!user) {
       return replyUnauthorized(ctx, maxUserId);
     }
 
-    const organization = await getOrganizationByOrgId(user.org_id);
-    const orgName = organization?.org_name ?? `org_id=${user.org_id}`;
-
-    return ctx.reply(
-      `Здравствуйте. Организация: ${orgName}.\nОтправьте количество услуг числом (до ${config.maxRequestCount}).`,
-    );
+    ctx.authorizedUser = user;
+    return replyStartMessage(ctx, maxUserId);
   });
 
   bot.command("ping", async (ctx: any) => {

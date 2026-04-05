@@ -54,3 +54,9 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/
 
 Диагностика обработки заявок и статусов очереди:
 - [docs/worker_queue.md](docs/worker_queue.md)
+
+## Timezone
+
+- Set `BOT_TIMEZONE=Europe/Moscow` in `.env`.
+- PostgreSQL runs with `-c timezone=Europe/Moscow` from `docker-compose.yml`.
+- For existing databases, apply migration: `db/migrations/20260405_set_moscow_timezone.sql`.

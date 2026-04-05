@@ -172,3 +172,17 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/
 ```bash
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrations/20260405_auto_ids_for_pgadmin.sql
 ```
+
+## 6) Set Moscow timezone for DB sessions
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrations/20260405_set_moscow_timezone.sql
+docker compose restart postgres bot worker
+```
+
+Проверка:
+
+```bash
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SHOW TIME ZONE;"
+docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" -c "SELECT NOW() AS db_now, NOW() AT TIME ZONE 'Europe/Moscow' AS msk_now;"
+```

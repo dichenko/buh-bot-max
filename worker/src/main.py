@@ -489,7 +489,11 @@ def run_forever() -> None:
 
     while True:
         try:
-            with psycopg.connect(config.database_url, row_factory=dict_row) as conn:
+            with psycopg.connect(
+                config.database_url,
+                row_factory=dict_row,
+                options=f"-c timezone={config.timezone_name}",
+            ) as conn:
                 while True:
                     row = _claim_next_invoice(conn, worker_id)
                     if row is None:
