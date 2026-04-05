@@ -1,44 +1,38 @@
-# BUH Bot MAX (Scaffold)
+# BUH Bot MAX
 
-Каркас нового проекта для миграции Telegram-бота в MAX:
+Каркас проекта для переноса Telegram-бота в MAX.
+
+Сервисы:
 - `bot/` — бот на TypeScript (`@maxhub/max-bot-api`)
-- `worker/` — Python-воркер генерации Excel/PDF
-- `db/` — PostgreSQL схема и SQL-миграции
-- `pgadmin` — UI для БД в Docker
+- `worker/` — Python-воркер
+- `postgres` + `pgadmin` — в Docker
+- `db/` — SQL-схема и миграции
 
-## 1. Быстрый старт
-
-1. Скопировать `.env.example` -> `.env` и заполнить значения.
-2. Поднять сервисы:
+## Быстрый старт
 
 ```bash
+cp .env.example .env
+# заполнить .env
+
 docker compose up -d --build
-```
-
-3. Проверить состояние:
-
-```bash
 docker compose ps
 docker compose logs --tail=200 bot worker postgres
 ```
 
-## 2. Структура
+## Важное по схеме users
 
-- `bot/src/index.ts` — запуск MAX-бота
-- `bot/src/handlers/registerHandlers.ts` — команды и основной flow
-- `db/init/001_schema.sql` — базовая схема с `users.max_user_id`
-- `db/migrations/20260405_add_max_user_id.sql` — миграция для существующей базы
-- `worker/src/excel_pdf_worker.py` — функции генерации документов
+- `users.tg_user_id` — старый Telegram ID (nullable, для обратной совместимости)
+- `users.max_user_id` — MAX ID (nullable, заполняется постепенно)
+- `users.org_id` — обязательная привязка к одной организации
 
-## 3. Деплой на VPS
+Одна организация может иметь много пользователей.
 
-```bash
-git pull --ff-only origin main
-docker compose up -d --build
-docker compose ps
-```
+## Миграция и импорт старых CSV
 
-Если база уже существует и создана до добавления поля `max_user_id`, применить миграцию:
+Подробная инструкция:
+- [docs/db_migration.md](docs/db_migration.md)
+
+Коротко (миграция существующей БД):
 
 ```bash
 docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/migrations/20260405_add_max_user_id.sql

@@ -24,7 +24,7 @@ bot.api.setMyCommands([
   },
   {
     name: "bindmax",
-    description: "[admin] /bindmax <legacy_user_id> <max_user_id>",
+    description: "[admin] /bindmax <legacy_tg_user_id> <max_user_id>",
   },
 ]);
 

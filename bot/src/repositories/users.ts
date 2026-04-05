@@ -3,7 +3,7 @@ import { LEGACY_INITIAL_USER_TIME } from "../config";
 
 export type UserRow = {
   id: number;
-  user_id: number | null;
+  tg_user_id: number | null;
   max_user_id: number | null;
   org_id: number;
   user_time: number;
@@ -12,7 +12,7 @@ export type UserRow = {
 export const getUserByMaxUserId = async (maxUserId: number): Promise<UserRow | null> => {
   const result = await pool.query<UserRow>(
     `
-      SELECT id, user_id, max_user_id, org_id, user_time
+      SELECT id, tg_user_id, max_user_id, org_id, user_time
       FROM users
       WHERE max_user_id = $1
       ORDER BY id ASC
@@ -32,9 +32,9 @@ export const addUserWithMaxId = async (maxUserId: number, orgId: number): Promis
 
   const result = await pool.query<UserRow>(
     `
-      INSERT INTO users (user_id, max_user_id, org_id, user_time)
+      INSERT INTO users (tg_user_id, max_user_id, org_id, user_time)
       VALUES ($1, $2, $3, $4)
-      RETURNING id, user_id, max_user_id, org_id, user_time
+      RETURNING id, tg_user_id, max_user_id, org_id, user_time
     `,
     [null, maxUserId, orgId, LEGACY_INITIAL_USER_TIME],
   );
@@ -43,17 +43,17 @@ export const addUserWithMaxId = async (maxUserId: number, orgId: number): Promis
 };
 
 export const bindMaxIdToLegacyUser = async (
-  legacyUserId: number,
+  legacyTgUserId: number,
   maxUserId: number,
 ): Promise<UserRow | null> => {
   const result = await pool.query<UserRow>(
     `
       UPDATE users
       SET max_user_id = $2
-      WHERE user_id = $1
-      RETURNING id, user_id, max_user_id, org_id, user_time
+      WHERE tg_user_id = $1
+      RETURNING id, tg_user_id, max_user_id, org_id, user_time
     `,
-    [legacyUserId, maxUserId],
+    [legacyTgUserId, maxUserId],
   );
 
   return result.rows[0] ?? null;

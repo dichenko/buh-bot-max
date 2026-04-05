@@ -114,20 +114,20 @@ export const registerHandlers = (bot: Bot): void => {
       return ctx.reply("Недостаточно прав.");
     }
 
-    const legacyUserId = parsePositiveNumber(String(ctx.match?.[1] ?? ""));
+    const legacyTgUserId = parsePositiveNumber(String(ctx.match?.[1] ?? ""));
     const maxUserId = parsePositiveNumber(String(ctx.match?.[2] ?? ""));
 
-    if (!legacyUserId || !maxUserId) {
-      return ctx.reply("Формат: /bindmax <legacy_telegram_user_id> <max_user_id>");
+    if (!legacyTgUserId || !maxUserId) {
+      return ctx.reply("Формат: /bindmax <legacy_tg_user_id> <max_user_id>");
     }
 
-    const updated = await bindMaxIdToLegacyUser(legacyUserId, maxUserId);
+    const updated = await bindMaxIdToLegacyUser(legacyTgUserId, maxUserId);
     if (!updated) {
-      return ctx.reply("Запись с таким legacy user_id не найдена.");
+      return ctx.reply("Запись с таким legacy tg_user_id не найдена.");
     }
 
     return ctx.reply(
-      `Привязка выполнена: legacy_user_id=${legacyUserId} -> max_user_id=${maxUserId}`,
+      `Привязка выполнена: legacy_tg_user_id=${legacyTgUserId} -> max_user_id=${maxUserId}`,
     );
   });
 
