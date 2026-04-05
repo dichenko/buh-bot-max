@@ -60,3 +60,10 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/
 - Set `BOT_TIMEZONE=Europe/Moscow` in `.env`.
 - PostgreSQL runs with `-c timezone=Europe/Moscow` from `docker-compose.yml`.
 - For existing databases, apply migration: `db/migrations/20260405_set_moscow_timezone.sql`.
+
+## MAX delivery from worker
+
+- Python `worker` sends generated PDF files to the MAX user after email is sent.
+- Required worker env vars:
+  - `MAX_BOT_TOKEN`
+  - `MAX_API_BASE_URL` (default: `https://platform-api.max.ru`)

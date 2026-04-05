@@ -9,7 +9,7 @@ import time
 from dataclasses import dataclass
 from email.message import EmailMessage
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 import psycopg
@@ -20,6 +20,7 @@ from psycopg.rows import dict_row
 from .excel_pdf_worker import DocumentTask, WorkerResult, generate_documents
 
 DEFAULT_TIMEZONE_NAME = "Europe/Moscow"
+DEFAULT_MAX_API_BASE_URL = "https://platform-api.max.ru"
 
 
 class TimezoneAwareFormatter(logging.Formatter):
@@ -71,6 +72,16 @@ class MegaPlanConfig:
 
 
 @dataclass(frozen=True)
+class MaxBotConfig:
+    token: str
+    api_base_url: str
+    request_timeout_seconds: float
+    retries: int
+    retry_delay_seconds: float
+    attachment_ready_retry_delay_seconds: float
+
+
+@dataclass(frozen=True)
 class WorkerConfig:
     database_url: str
     poll_interval_seconds: float
@@ -81,6 +92,7 @@ class WorkerConfig:
     timezone: dt.tzinfo
     smtp: SmtpConfig
     megaplan: MegaPlanConfig
+    max_bot: MaxBotConfig
 
 
 def _parse_positive_float(name: str, default: float) -> float:
@@ -113,6 +125,17 @@ def _parse_positive_int(name: str, default: int) -> int:
         raise ValueError(f"{name} must be a positive integer")
 
     return value
+
+
+def _normalize_base_url(raw: str | None, default: str) -> str:
+    candidate = (raw or "").strip()
+    if not candidate:
+        return default
+
+    if not candidate.startswith(("http://", "https://")):
+        candidate = f"https://{candidate}"
+
+    return candidate.rstrip("/")
 
 
 def _require_env(name: str) -> str:
@@ -188,6 +211,22 @@ def _load_megaplan_config() -> MegaPlanConfig:
     )
 
 
+def _load_max_bot_config() -> MaxBotConfig:
+    token = _require_env("MAX_BOT_TOKEN")
+    api_base_url = _normalize_base_url(os.getenv("MAX_API_BASE_URL"), DEFAULT_MAX_API_BASE_URL)
+
+    return MaxBotConfig(
+        token=token,
+        api_base_url=api_base_url,
+        request_timeout_seconds=_parse_positive_float("MAX_API_TIMEOUT_SECONDS", 30.0),
+        retries=_parse_positive_int("MAX_API_RETRIES", 5),
+        retry_delay_seconds=_parse_positive_float("MAX_API_RETRY_DELAY_SECONDS", 2.0),
+        attachment_ready_retry_delay_seconds=_parse_positive_float(
+            "MAX_ATTACHMENT_READY_RETRY_DELAY_SECONDS", 1.0
+        ),
+    )
+
+
 def _load_config() -> WorkerConfig:
     database_url = (os.getenv("DATABASE_URL") or "").strip()
     if not database_url:
@@ -215,6 +254,7 @@ def _load_config() -> WorkerConfig:
         timezone=timezone,
         smtp=_load_smtp_config(),
         megaplan=_load_megaplan_config(),
+        max_bot=_load_max_bot_config(),
     )
 
 
@@ -469,6 +509,330 @@ def _create_megaplan_task(
     return task_id
 
 
+class MaxApiError(RuntimeError):
+    def __init__(
+        self,
+        action: str,
+        status_code: int,
+        code: str | None = None,
+        message: str | None = None,
+        retry_after_seconds: float | None = None,
+    ):
+        details = message or "Unknown MAX API error"
+        code_part = f", code={code}" if code else ""
+        super().__init__(f"MAX API {action} failed [{status_code}{code_part}]: {details}")
+        self.action = action
+        self.status_code = status_code
+        self.code = code or ""
+        self.message = details
+        self.retry_after_seconds = retry_after_seconds
+
+
+def _extract_retry_after_seconds(response: requests.Response) -> float | None:
+    raw_value = response.headers.get("Retry-After")
+    if not raw_value:
+        return None
+
+    try:
+        parsed = float(raw_value)
+    except ValueError:
+        return None
+
+    if parsed <= 0:
+        return None
+    return parsed
+
+
+def _extract_max_error_payload(response: requests.Response) -> tuple[str, str]:
+    try:
+        payload = response.json()
+    except ValueError:
+        body = (response.text or "").strip()
+        return "", body[:1000] if body else "Unknown MAX API error"
+
+    if not isinstance(payload, dict):
+        return "", str(payload)[:1000]
+
+    code_raw = payload.get("code")
+    message_raw = payload.get("message")
+
+    code = str(code_raw).strip() if code_raw is not None else ""
+    message = str(message_raw).strip() if message_raw is not None else ""
+    if not message:
+        message = str(payload)[:1000]
+
+    return code, message
+
+
+def _raise_for_max_response(action: str, response: requests.Response) -> None:
+    if response.ok:
+        return
+
+    code, message = _extract_max_error_payload(response)
+    raise MaxApiError(
+        action=action,
+        status_code=response.status_code,
+        code=code,
+        message=message,
+        retry_after_seconds=_extract_retry_after_seconds(response),
+    )
+
+
+def _is_retryable_max_error(error: MaxApiError) -> bool:
+    return (
+        error.code == "attachment.not.ready"
+        or error.status_code == 429
+        or error.status_code >= 500
+    )
+
+
+def _max_retry_delay_seconds(config: MaxBotConfig, error: MaxApiError, attempt: int) -> float:
+    if error.code == "attachment.not.ready":
+        return config.attachment_ready_retry_delay_seconds
+
+    if error.retry_after_seconds is not None:
+        return error.retry_after_seconds
+
+    exponential_backoff = config.retry_delay_seconds * max(1, attempt)
+    return min(exponential_backoff, 30.0)
+
+
+def _run_with_max_retries(
+    config: MaxBotConfig,
+    operation_name: str,
+    operation: Callable[[], Any],
+) -> Any:
+    max_attempts = max(1, config.retries)
+    attempt = 0
+
+    while attempt < max_attempts:
+        attempt += 1
+        try:
+            return operation()
+        except MaxApiError as error:
+            if not _is_retryable_max_error(error) or attempt >= max_attempts:
+                raise
+
+            sleep_seconds = _max_retry_delay_seconds(config, error, attempt)
+            logging.warning(
+                "MAX retryable error on %s (attempt %s/%s): %s. Retry in %.1fs",
+                operation_name,
+                attempt,
+                max_attempts,
+                error,
+                sleep_seconds,
+            )
+            time.sleep(sleep_seconds)
+        except requests.RequestException as error:
+            if attempt >= max_attempts:
+                raise RuntimeError(
+                    f"MAX network failure on {operation_name}: {error}"
+                ) from error
+
+            sleep_seconds = min(config.retry_delay_seconds * max(1, attempt), 30.0)
+            logging.warning(
+                "MAX network error on %s (attempt %s/%s): %s. Retry in %.1fs",
+                operation_name,
+                attempt,
+                max_attempts,
+                error,
+                sleep_seconds,
+            )
+            time.sleep(sleep_seconds)
+
+    raise RuntimeError(f"MAX operation failed without details: {operation_name}")
+
+
+def _max_headers(config: MaxBotConfig, include_json: bool = False) -> dict[str, str]:
+    headers = {"Authorization": config.token}
+    if include_json:
+        headers["Content-Type"] = "application/json"
+    return headers
+
+
+def _max_api_url(config: MaxBotConfig, path: str) -> str:
+    normalized_path = path if path.startswith("/") else f"/{path}"
+    return f"{config.api_base_url}{normalized_path}"
+
+
+def _max_get_upload_url(config: MaxBotConfig) -> tuple[str, str | None]:
+    response = requests.post(
+        _max_api_url(config, "/uploads"),
+        params={"type": "file"},
+        headers=_max_headers(config, include_json=False),
+        timeout=config.request_timeout_seconds,
+    )
+    _raise_for_max_response("POST /uploads", response)
+
+    payload = response.json()
+    if not isinstance(payload, dict):
+        raise RuntimeError("MAX /uploads returned invalid response type")
+
+    upload_url_raw = payload.get("url")
+    if not isinstance(upload_url_raw, str) or not upload_url_raw.strip():
+        raise RuntimeError("MAX /uploads returned empty url")
+
+    token_raw = payload.get("token")
+    token = str(token_raw).strip() if token_raw is not None else None
+    return upload_url_raw.strip(), token or None
+
+
+def _max_upload_file_multipart(config: MaxBotConfig, upload_url: str, pdf_path: Path) -> str:
+    with pdf_path.open("rb") as stream:
+        response = requests.post(
+            upload_url,
+            files={"data": (pdf_path.name, stream, "application/pdf")},
+            timeout=config.request_timeout_seconds,
+        )
+    _raise_for_max_response(f"upload file {pdf_path.name} (multipart)", response)
+
+    try:
+        payload = response.json()
+    except ValueError as exc:
+        raise RuntimeError(
+            f"MAX upload response is not JSON for {pdf_path.name}: {(response.text or '').strip()[:500]}"
+        ) from exc
+
+    if not isinstance(payload, dict):
+        raise RuntimeError(f"MAX upload response has invalid shape for {pdf_path.name}")
+
+    token_raw = payload.get("token")
+    token = str(token_raw).strip() if token_raw is not None else ""
+    if not token:
+        raise RuntimeError(f"MAX upload response does not contain token for {pdf_path.name}")
+
+    return token
+
+
+def _max_upload_file_range(
+    config: MaxBotConfig,
+    upload_url: str,
+    upload_token: str,
+    pdf_path: Path,
+) -> str:
+    file_size = pdf_path.stat().st_size
+    if file_size <= 0:
+        raise RuntimeError(f"File is empty: {pdf_path}")
+
+    start = 0
+    chunk_size = 1024 * 1024
+    safe_name = pdf_path.name.replace('"', "")
+
+    with pdf_path.open("rb") as stream:
+        while True:
+            chunk = stream.read(chunk_size)
+            if not chunk:
+                break
+
+            end = start + len(chunk) - 1
+            response = requests.post(
+                upload_url,
+                data=chunk,
+                headers={
+                    "Content-Disposition": f'attachment; filename="{safe_name}"',
+                    "Content-Range": f"bytes {start}-{end}/{file_size}",
+                    "Content-Type": "application/x-binary; charset=x-user-defined",
+                    "X-File-Name": safe_name,
+                    "X-Uploading-Mode": "parallel",
+                    "Connection": "keep-alive",
+                },
+                timeout=config.request_timeout_seconds,
+            )
+            _raise_for_max_response(f"upload file {pdf_path.name} (range)", response)
+            start = end + 1
+
+    if start != file_size:
+        raise RuntimeError(
+            f"MAX range upload did not send full file {pdf_path.name}: sent={start} expected={file_size}"
+        )
+
+    return upload_token
+
+
+def _max_upload_pdf(config: MaxBotConfig, pdf_path: Path) -> str:
+    if not pdf_path.exists() or not pdf_path.is_file():
+        raise RuntimeError(f"PDF file does not exist: {pdf_path}")
+
+    def _upload_once() -> str:
+        upload_url, upload_token = _max_get_upload_url(config)
+        if upload_token:
+            return _max_upload_file_range(config, upload_url, upload_token, pdf_path)
+        return _max_upload_file_multipart(config, upload_url, pdf_path)
+
+    return _run_with_max_retries(
+        config,
+        operation_name=f"upload {pdf_path.name} to MAX",
+        operation=_upload_once,
+    )
+
+
+def _max_send_message_with_attachments(
+    config: MaxBotConfig,
+    user_id: int,
+    text: str,
+    attachment_tokens: list[str],
+) -> None:
+    payload = {
+        "text": text,
+        "attachments": [
+            {"type": "file", "payload": {"token": token}} for token in attachment_tokens
+        ],
+    }
+
+    def _send_once() -> None:
+        response = requests.post(
+            _max_api_url(config, "/messages"),
+            params={"user_id": user_id},
+            headers=_max_headers(config, include_json=True),
+            json=payload,
+            timeout=config.request_timeout_seconds,
+        )
+        _raise_for_max_response("POST /messages", response)
+
+    _run_with_max_retries(
+        config,
+        operation_name=f"send documents to MAX user_id={user_id}",
+        operation=_send_once,
+    )
+
+
+def _send_documents_to_max_user(
+    config: MaxBotConfig,
+    task: DocumentTask,
+    pdf_paths: list[Path],
+) -> None:
+    if not pdf_paths:
+        raise RuntimeError("No PDF files to send via MAX")
+
+    tokens: list[str] = []
+    for pdf_path in pdf_paths:
+        token = _max_upload_pdf(config, pdf_path)
+        tokens.append(token)
+        logging.info(
+            "MAX file uploaded for user_id=%s invoice=%s file=%s",
+            task.user_id,
+            task.invoice_number,
+            pdf_path.name,
+        )
+
+    _max_send_message_with_attachments(
+        config=config,
+        user_id=task.user_id,
+        text=(
+            f"Документы по заявке сформированы.\n"
+            f"Счет №{task.invoice_number}.\n"
+            f"Организация: {task.org_name}."
+        ),
+        attachment_tokens=tokens,
+    )
+    logging.info(
+        "MAX documents sent to user_id=%s invoice=%s files=%s",
+        task.user_id,
+        task.invoice_number,
+        [path.name for path in pdf_paths],
+    )
+
+
 def run_forever() -> None:
     load_dotenv()
     config = _load_config()
@@ -478,11 +842,12 @@ def run_forever() -> None:
     worker_id = f"{socket.gethostname()}:{os.getpid()}"
     logging.info("Python worker started: id=%s", worker_id)
     logging.info(
-        "Worker config: poll=%ss templates_dir=%s output_dir=%s timezone=%s",
+        "Worker config: poll=%ss templates_dir=%s output_dir=%s timezone=%s max_api=%s",
         config.poll_interval_seconds,
         config.templates_dir,
         config.output_dir,
         config.timezone_name,
+        config.max_bot.api_base_url,
     )
 
     last_idle_log_ts = 0.0
@@ -525,6 +890,7 @@ def run_forever() -> None:
                         pdf_paths = _extract_pdf_paths(result.pdf_files)
 
                         _send_invoice_email(config.smtp, task, pdf_paths)
+                        _send_documents_to_max_user(config.max_bot, task, pdf_paths)
                         megaplan_task_id = _create_megaplan_task(
                             config.megaplan,
                             task,

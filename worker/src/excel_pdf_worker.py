@@ -122,13 +122,6 @@ def _fill_invoice(
     workbook = openpyxl.load_workbook(template_path)
     sheet = workbook.active
 
-    # Template carries print scale=64; reset to normal to avoid compressed PDF.
-    sheet.page_setup.scale = 100
-    sheet.page_setup.fitToWidth = None
-    sheet.page_setup.fitToHeight = None
-    if sheet.sheet_properties.pageSetUpPr is not None:
-        sheet.sheet_properties.pageSetUpPr.fitToPage = False
-
     sheet["A10"] = f"Счет-договор № {task.invoice_number} от {date_str}"
     sheet["D18"] = f"{task.org_name}, ИНН {task.org_inn}"
     sheet["G25"] = f"{task.count}"
