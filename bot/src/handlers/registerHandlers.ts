@@ -244,7 +244,7 @@ export const registerHandlers = (bot: Bot): void => {
         `Количество: ${count}.`,
         `Цена за 1 услугу: ${formatPrice(pricePerItem)} руб.`,
         `Сумма: ${formatPrice(total)} руб.`,
-        "Далее заявку обработает Python-воркер документов.",
+        
       ].join("\n"),
     );
   });
