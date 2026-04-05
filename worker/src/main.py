@@ -772,28 +772,29 @@ def _max_send_message_with_attachments(
     text: str,
     attachment_tokens: list[str],
 ) -> None:
-    payload = {
-        "text": text,
-        "attachments": [
-            {"type": "file", "payload": {"token": token}} for token in attachment_tokens
-        ],
-    }
+    total = len(attachment_tokens)
+    for index, token in enumerate(attachment_tokens, start=1):
+        message_text = text if index == 1 else f"Документ {index}/{total}"
+        payload = {
+            "text": message_text,
+            "attachments": [{"type": "file", "payload": {"token": token}}],
+        }
 
-    def _send_once() -> None:
-        response = requests.post(
-            _max_api_url(config, "/messages"),
-            params={"user_id": user_id},
-            headers=_max_headers(config, include_json=True),
-            json=payload,
-            timeout=config.request_timeout_seconds,
+        def _send_once() -> None:
+            response = requests.post(
+                _max_api_url(config, "/messages"),
+                params={"user_id": user_id},
+                headers=_max_headers(config, include_json=True),
+                json=payload,
+                timeout=config.request_timeout_seconds,
+            )
+            _raise_for_max_response("POST /messages", response)
+
+        _run_with_max_retries(
+            config,
+            operation_name=f"send document {index}/{total} to MAX user_id={user_id}",
+            operation=_send_once,
         )
-        _raise_for_max_response("POST /messages", response)
-
-    _run_with_max_retries(
-        config,
-        operation_name=f"send documents to MAX user_id={user_id}",
-        operation=_send_once,
-    )
 
 
 def _send_documents_to_max_user(
