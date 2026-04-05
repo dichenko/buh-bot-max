@@ -5,6 +5,7 @@ type AppConfig = {
   botSubdomain: string;
   databaseUrl: string;
   adminIds: Set<number>;
+  adminEmails: string[];
   timezone: string;
   workStart: string;
   workEnd: string;
@@ -76,11 +77,25 @@ const parseAdminIds = (): Set<number> => {
   return new Set<number>(ids);
 };
 
+const parseAdminEmails = (): string[] => {
+  const raw = process.env.ADMIN_EMAIL?.trim();
+  if (!raw) {
+    return [];
+  }
+
+  return raw
+    .split(",")
+    .map((chunk) => chunk.trim())
+    .filter(Boolean)
+    .map((value) => value.toLowerCase());
+};
+
 export const config: AppConfig = {
   botToken: requireEnv("MAX_BOT_TOKEN"),
   botSubdomain: process.env.BOT_SUBDOMAIN?.trim() || "",
   databaseUrl: requireEnv("DATABASE_URL"),
   adminIds: parseAdminIds(),
+  adminEmails: parseAdminEmails(),
   timezone: process.env.BOT_TIMEZONE?.trim() || "Europe/Moscow",
   workStart: process.env.WORK_START?.trim() || "00:01",
   workEnd: process.env.WORK_END?.trim() || "20:59",
