@@ -3,3 +3,4 @@ num2words==0.5.14
 python-dotenv==1.0.1
 psycopg[binary]==3.2.12
 requests==2.32.3
+Pillow==11.2.1

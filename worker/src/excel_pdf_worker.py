@@ -12,6 +12,7 @@ from zoneinfo import ZoneInfo
 
 import openpyxl
 from num2words import num2words
+from PIL import Image as PILImage  # noqa: F401
 
 DEFAULT_TIMEZONE = ZoneInfo("Europe/Moscow")
 
