@@ -14,29 +14,6 @@ const PROCESSED_UPDATE_CACHE_LIMIT = 10_000;
 const processedUpdateKeys = new Map<string, number>();
 const inFlightUpdates = new Map<string, Promise<void>>();
 
-const botCommands = [
-  {
-    name: "start",
-    description: "Начать работу с ботом",
-  },
-  {
-    name: "ping",
-    description: "Проверка доступности бота",
-  },
-  {
-    name: "add",
-    description: "[admin] /add <max_user_id> <org_id>",
-  },
-  {
-    name: "del",
-    description: "[admin] /del <max_user_id>",
-  },
-  {
-    name: "bindmax",
-    description: "[admin] /bindmax <legacy_tg_user_id> <max_user_id>",
-  },
-];
-
 registerHandlers(bot);
 
 let botInfo: unknown;
@@ -373,15 +350,15 @@ const start = async (): Promise<void> => {
   }
 
   // MAX API may be temporarily unavailable (DNS/network). Keep webhook server
-  // alive and retry metadata sync in background until it succeeds.
+  // alive and retry bot metadata fetch in background until it succeeds.
   void (async () => {
     let attempt = 0;
     while (true) {
       attempt += 1;
       try {
-        await bot.api.setMyCommands(botCommands);
+        await bot.api.deleteMyCommands();
         botInfo = await bot.api.getMyInfo();
-        logger.info("MAX bot commands synced and bot info loaded.");
+        logger.info("MAX bot commands cleared and bot info loaded.");
         return;
       } catch (error) {
         const delayMs = Math.min(30000, attempt * 5000);
