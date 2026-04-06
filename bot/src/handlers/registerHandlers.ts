@@ -29,8 +29,9 @@ const adminHelpMessage = (maxUserId: number): string => {
     `Вы админ, ваш MAX_ID ${escapeHtml(maxUserId)}`,
     "",
     "Доступные команды:",
-    "/add <max_user_id> <org_id> - добавить пользователя в БД и привязать к организации. Пример: /add 382159692 107",
-    "/del <max_user_id> - удалить пользователя из БД. Пример: /del 382159692",
+    "<u>/add &lt;max_user_id&gt; &lt;org_id&gt;</u> - добавить пользователя в БД и привязать к организации. Пример: /add 382159692 107",
+    "",
+    "<u>/del &lt;max_user_id&gt;</u> - удалить пользователя из БД. Пример: /del 382159692",
   ].join("\n");
 };
 
@@ -75,7 +76,7 @@ const replyUnauthorized = (ctx: any, maxUserId: number): Promise<unknown> => {
 };
 
 const replyAdminStartMessage = (ctx: any, maxUserId: number): Promise<unknown> => {
-  return ctx.reply(adminHelpMessage(maxUserId));
+  return ctx.reply(adminHelpMessage(maxUserId), { format: "html" });
 };
 
 const replyUserStartMessage = async (ctx: any, maxUserId: number): Promise<unknown> => {
