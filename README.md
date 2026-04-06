@@ -5,6 +5,7 @@
 Сервисы:
 - `bot/` — бот на TypeScript (`@maxhub/max-bot-api`)
 - `worker/` — Python-воркер
+- `worker-report` — отдельный Python-воркер ежедневной отчетности
 - `postgres` + `pgadmin` — в Docker
 - `db/` — SQL-схема и миграции
 
@@ -16,7 +17,7 @@ cp .env.example .env
 
 docker compose up -d --build
 docker compose ps
-docker compose logs --tail=200 bot worker postgres
+docker compose logs --tail=200 bot worker worker-report postgres
 ```
 
 ## Webhook режим (без polling)

@@ -95,6 +95,33 @@ services:
     volumes:
       - ./worker/output:/app/obrazec
 
+  worker-report:
+    build:
+      context: ./worker
+    container_name: buh-bot-max-worker-report
+    restart: unless-stopped
+    command: ["python", "-m", "src.report_worker"]
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      TZ: ${BOT_TIMEZONE:-Europe/Moscow}
+      BOT_TIMEZONE: ${BOT_TIMEZONE:-Europe/Moscow}
+      ADMIN_EMAIL: ${ADMIN_EMAIL}
+      SMTP_HOST: ${SMTP_HOST}
+      SMTP_PORT: ${SMTP_PORT}
+      SMTP_SECURE: ${SMTP_SECURE}
+      SMTP_USER: ${SMTP_USER}
+      SMTP_PASSWORD: ${SMTP_PASSWORD}
+      SMTP_FROM: ${SMTP_FROM}
+      DAILY_REPORT_ENABLED: ${DAILY_REPORT_ENABLED:-true}
+      DAILY_REPORT_TIME: ${DAILY_REPORT_TIME:-21:00:01}
+      DAILY_REPORT_TABLES: ${DAILY_REPORT_TABLES:-invoices_ua,invoices_av,invoices_3,invoices_ip}
+      DAILY_REPORT_OUTPUT_DIR: ${DAILY_REPORT_OUTPUT_DIR:-/app/reports}
+      REPORT_WORKER_POLL_INTERVAL_SECONDS: ${REPORT_WORKER_POLL_INTERVAL_SECONDS:-1}
+      REPORT_WORKER_RETRY_SECONDS: ${REPORT_WORKER_RETRY_SECONDS:-300}
+    depends_on:
+      postgres:
+        condition: service_healthy
+
   pgadmin:
     image: dpage/pgadmin4:9.14
     container_name: buh-bot-max-pgadmin
