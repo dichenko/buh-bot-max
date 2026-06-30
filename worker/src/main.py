@@ -20,7 +20,7 @@ from psycopg.rows import dict_row
 from .excel_pdf_worker import DocumentTask, WorkerResult, generate_documents
 
 DEFAULT_TIMEZONE_NAME = "Europe/Moscow"
-DEFAULT_MAX_API_BASE_URL = "https://platform-api.max.ru"
+DEFAULT_MAX_API_BASE_URL = "https://platform-api2.max.ru"
 
 
 class TimezoneAwareFormatter(logging.Formatter):

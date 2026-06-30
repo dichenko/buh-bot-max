@@ -67,4 +67,4 @@ docker compose exec -T postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" < db/
 - Python `worker` sends generated PDF files to the MAX user after email is sent.
 - Required worker env vars:
   - `MAX_BOT_TOKEN`
-  - `MAX_API_BASE_URL` (default: `https://platform-api.max.ru`)
+  - `MAX_API_BASE_URL` (default: `https://platform-api2.max.ru`)
